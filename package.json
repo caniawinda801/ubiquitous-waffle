@@ -1,0 +1,53 @@
+{
+  "name": "eltsa-safe-exam-browser",
+  "version": "1.0.0",
+  "description": "ELTSA Safe Exam Browser - Kiosk browser untuk ujian Star Academy",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder build --win",
+    "pack": "electron-builder --dir"
+  },
+  "author": "Star Academy UNIS",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5"
+  },
+  "build": {
+    "appId": "ac.id.unis.staracademy.seb",
+    "productName": "ELTSA Safe Exam Browser",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "ELTSA-SafeExam-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "assets/icon.png",
+      "artifactName": "ELTSA-SafeExam-mac-${version}.${ext}"
+    }
+  }
+}
