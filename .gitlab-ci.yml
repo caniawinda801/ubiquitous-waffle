@@ -1,0 +1,46 @@
+stages:
+  - build
+
+variables:
+  NODE_VERSION: "20"
+
+# ============================================================
+# BUILD WINDOWS (portable .exe)
+# ============================================================
+build-windows:
+  stage: build
+  tags:
+    - saas-windows-medium-amd64
+  before_script:
+    - choco install nodejs --version=$NODE_VERSION -y --no-progress
+    - refreshenv
+    - node --version
+    - npm --version
+  script:
+    - npm install
+    - npm run pack
+  artifacts:
+    paths:
+      - dist/win-unpacked/
+    expire_in: 30 days
+
+# ============================================================
+# BUILD MACOS (dmg + zip)
+# ============================================================
+build-macos:
+  stage: build
+  tags:
+    - saas-macos-medium-m1
+  before_script:
+    - brew install node@20 || true
+    - export PATH="/opt/homebrew/opt/node@20/bin:$PATH"
+    - node --version
+    - npm --version
+  script:
+    - npm install
+    - npm run build -- --mac
+  artifacts:
+    paths:
+      - dist/*.dmg
+      - dist/*.zip
+    expire_in: 30 days
