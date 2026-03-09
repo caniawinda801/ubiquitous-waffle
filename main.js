@@ -1,8 +1,9 @@
 ﻿// ============================================================
 // ELTSA SAFE EXAM BROWSER - SIMPLE KIOSK
 // Buka website langsung, kunci komputer selama ujian
-// + Toolbar Refresh & Keluar SELALU tampil
-// + Ctrl+P untuk keluar/tutup aplikasi (selalu aktif)
+// + Toolbar Refresh SELALU tampil
+// + Ctrl+P = LOGOUT + TUTUP APLIKASI (tanpa konfirmasi)
+//   → Agar waktu ujian tidak berkurang & bisa dilanjutkan
 // + Auto-refresh saat kembali ke aplikasi
 // ============================================================
 const { app, BrowserWindow, globalShortcut, ipcMain, dialog, session, Menu } = require('electron');
@@ -10,6 +11,7 @@ const path = require('path');
 
 const CONFIG = {
   URL: 'https://staracademy.unis.ac.id/Login',
+  LOGOUT_URL: 'https://staracademy.unis.ac.id/Login/logout',
   ALLOWED: ['staracademy.unis.ac.id', 'unis.ac.id'],
   APP_NAME: 'ELTSA Safe Exam Browser',
 };
@@ -126,26 +128,41 @@ function createWindow() {
 }
 
 // ============================================================
-//  HANDLE EXIT APP (Ctrl+P atau tombol Keluar)
+//  HANDLE EXIT APP (Ctrl+P = Langsung LOGOUT + TUTUP)
+//  Tidak ada konfirmasi → langsung logout agar waktu tidak jalan
 // ============================================================
 function handleExitApp() {
   if (!win) return;
+  console.log('[SEB] Ctrl+P → Logout & tutup aplikasi...');
 
-  if (locked) {
-    dialog.showMessageBox(win, {
-      type: 'warning',
-      title: 'Keluar Safe Exam Browser',
-      message: 'Apakah Anda yakin ingin keluar dari ujian?\n\nPerhatian: Ujian yang belum selesai mungkin tidak tersimpan!',
-      buttons: ['Batal', 'Keluar'],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    }).then(({ response }) => {
-      if (response === 1) forceExit();
-    });
-  } else {
-    forceExit();
+  // Unlock dulu agar bisa navigasi dan close
+  const wasLocked = locked;
+  if (wasLocked) {
+    locked = false;
+    win.setClosable(true);
+    win.setKiosk(false);
+    win.setFullScreen(false);
+    win.setAlwaysOnTop(false);
+    win.setMinimizable(true);
+    win.setMovable(true);
+    win.setSkipTaskbar(false);
   }
+
+  // Navigasi ke logout URL agar session logout & waktu berhenti
+  win.webContents.loadURL(CONFIG.LOGOUT_URL).then(() => {
+    console.log('[SEB] Logout berhasil, tutup aplikasi...');
+    setTimeout(() => forceExit(), 500);
+  }).catch(() => {
+    // Jika gagal navigate, tetap tutup
+    console.log('[SEB] Logout gagal, tetap tutup aplikasi...');
+    forceExit();
+  });
+
+  // Safety: jika logout terlalu lama, force exit setelah 3 detik
+  setTimeout(() => {
+    console.log('[SEB] Timeout - force exit');
+    forceExit();
+  }, 3000);
 }
 
 function forceExit() {
