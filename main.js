@@ -1,6 +1,9 @@
-// ============================================================
+﻿// ============================================================
 // ELTSA SAFE EXAM BROWSER - SIMPLE KIOSK
 // Buka website langsung, kunci komputer selama ujian
+// + Toolbar Refresh & Keluar SELALU tampil
+// + Ctrl+P untuk keluar/tutup aplikasi (selalu aktif)
+// + Auto-refresh saat kembali ke aplikasi
 // ============================================================
 const { app, BrowserWindow, globalShortcut, ipcMain, dialog, session, Menu } = require('electron');
 const path = require('path');
@@ -22,17 +25,40 @@ app.on('second-instance', () => { if (win) win.focus(); });
 Menu.setApplicationMenu(null);
 
 app.whenReady().then(() => {
-  // Set custom User-Agent
   session.defaultSession.webRequest.onBeforeSendHeaders((details, cb) => {
     details.requestHeaders['User-Agent'] = details.requestHeaders['User-Agent'] + ' ELTSA-SEB/1.0';
     cb({ requestHeaders: details.requestHeaders });
   });
 
   createWindow();
+
+  // === CTRL+P = KELUAR APLIKASI (selalu aktif, bukan cuma saat locked) ===
+  try {
+    globalShortcut.register('Ctrl+P', () => {
+      console.log('[SEB] Ctrl+P pressed - Exit app');
+      handleExitApp();
+    });
+  } catch(e) {
+    console.error('[SEB] Gagal register Ctrl+P:', e);
+  }
 });
 
 app.on('window-all-closed', () => { if (!locked) app.quit(); });
 app.on('before-quit', (e) => { if (locked) e.preventDefault(); });
+
+// ============================================================
+//  IPC HANDLERS
+// ============================================================
+ipcMain.on('seb-refresh', () => {
+  if (win) {
+    console.log('[SEB] Refresh halaman...');
+    win.webContents.reload();
+  }
+});
+
+ipcMain.on('seb-exit', () => {
+  handleExitApp();
+});
 
 // ============================================================
 //  BUAT WINDOW
@@ -58,8 +84,12 @@ function createWindow() {
   // --- DETEKSI HALAMAN BERUBAH ---
   win.webContents.on('did-navigate', (e, url) => checkPage(url));
   win.webContents.on('did-navigate-in-page', (e, url) => checkPage(url));
+
+  // === INJECT TOOLBAR DI SETIAP HALAMAN YANG SELESAI LOAD ===
   win.webContents.on('did-finish-load', () => {
-    checkPage(win.webContents.getURL());
+    const url = win.webContents.getURL();
+    checkPage(url);
+    injectToolbar();  // Selalu inject toolbar
   });
 
   // Block navigasi ke domain luar
@@ -77,6 +107,15 @@ function createWindow() {
   win.on('blur', () => {
     if (locked) setTimeout(() => { if (win && locked) { win.focus(); win.setAlwaysOnTop(true); } }, 50);
   });
+
+  // === AUTO-REFRESH saat window mendapat fokus kembali ===
+  win.on('focus', () => {
+    if (locked && win) {
+      console.log('[SEB] Window fokus kembali - auto refresh');
+      win.webContents.reload();
+    }
+  });
+
   win.on('minimize', (e) => { if (locked) { e.preventDefault(); win.restore(); } });
   win.on('close', (e) => { if (locked) e.preventDefault(); });
 
@@ -87,14 +126,50 @@ function createWindow() {
 }
 
 // ============================================================
+//  HANDLE EXIT APP (Ctrl+P atau tombol Keluar)
+// ============================================================
+function handleExitApp() {
+  if (!win) return;
+
+  if (locked) {
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Keluar Safe Exam Browser',
+      message: 'Apakah Anda yakin ingin keluar dari ujian?\n\nPerhatian: Ujian yang belum selesai mungkin tidak tersimpan!',
+      buttons: ['Batal', 'Keluar'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    }).then(({ response }) => {
+      if (response === 1) forceExit();
+    });
+  } else {
+    forceExit();
+  }
+}
+
+function forceExit() {
+  locked = false;
+  globalShortcut.unregisterAll();
+  if (win) {
+    win.setClosable(true);
+    win.setKiosk(false);
+    win.setFullScreen(false);
+    win.setAlwaysOnTop(false);
+    win.setMinimizable(true);
+    win.setMovable(true);
+    win.setSkipTaskbar(false);
+    win.close();
+  }
+  app.quit();
+}
+
+// ============================================================
 //  DETEKSI HALAMAN - KAPAN LOCK & UNLOCK
 // ============================================================
 function checkPage(url) {
   const u = url.toLowerCase();
 
-  // === LOCK: user masuk area ujian ===
-  // Setelah login + isi biodata, user masuk ke /Testcat/option (pilih section)
-  // Atau langsung ke /Testcat/prosestest (ngerjain soal)
   if (!locked && (
     u.includes('/testcat/option') ||
     u.includes('/testcat/prosestest') ||
@@ -103,11 +178,6 @@ function checkPage(url) {
     lockDown();
   }
 
-  // === UNLOCK: ujian selesai ===
-  // /testcat/hasil = halaman hasil skor
-  // /testcat/selesai = selesai ujian
-  // /login/logout = logout
-  // /Login = kembali ke login (session expired)
   if (locked && (
     u.includes('/testcat/hasil') ||
     u.includes('/testcat/selesai') ||
@@ -118,7 +188,6 @@ function checkPage(url) {
     unlock();
   }
 
-  // Inject anti-cheat JS di halaman ujian
   if (locked && win) {
     injectAntiCheat();
   }
@@ -140,17 +209,24 @@ function lockDown() {
   win.setMovable(false);
   win.setSkipTaskbar(true);
 
-  // Block keyboard shortcuts
   const shortcuts = [
     'Alt+Tab','Alt+F4','Alt+Escape','Alt+Space',
     'Ctrl+Escape','Ctrl+Shift+Escape',
     'Meta','Meta+D','Meta+E','Meta+R','Meta+L','Meta+Tab',
     'F11','F12','Ctrl+Shift+I','Ctrl+Shift+J',
     'Ctrl+W','Ctrl+T','Ctrl+N',
-    'Ctrl+U','Ctrl+S','Ctrl+P',
+    'Ctrl+U','Ctrl+S',
     'PrintScreen','Alt+PrintScreen','Meta+Shift+S',
   ];
   shortcuts.forEach(s => { try { globalShortcut.register(s, () => {}); } catch(e) {} });
+
+  // Re-register Ctrl+P as exit (karena unregisterAll mungkin terjadi)
+  try {
+    globalShortcut.register('Ctrl+P', () => {
+      console.log('[SEB] Ctrl+P pressed - Exit app');
+      handleExitApp();
+    });
+  } catch(e) {}
 }
 
 // ============================================================
@@ -162,6 +238,14 @@ function unlock() {
   console.log('[SEB] UNLOCKED - Exam mode OFF');
 
   globalShortcut.unregisterAll();
+
+  // Re-register Ctrl+P agar tetap aktif setelah unlock
+  try {
+    globalShortcut.register('Ctrl+P', () => {
+      console.log('[SEB] Ctrl+P pressed - Exit app');
+      handleExitApp();
+    });
+  } catch(e) {}
 
   win.setClosable(true);
   win.setMinimizable(true);
@@ -180,42 +264,57 @@ function unlock() {
 }
 
 // ============================================================
-//  INJECT ANTI-CHEAT KE HALAMAN
+//  INJECT TOOLBAR (hanya tombol Refresh di pojok kanan atas)
+// ============================================================
+function injectToolbar() {
+  if (!win) return;
+  win.webContents.executeJavaScript(`
+    (function(){
+      var old = document.getElementById('seb-toolbar');
+      if(old) old.remove();
+
+      var btn = document.createElement('button');
+      btn.id = 'seb-toolbar';
+      btn.innerHTML = '\\u{1F504}';
+      btn.title = 'Refresh halaman';
+      btn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:999999;background:#2563eb;color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;transition:background 0.2s;opacity:0.85;';
+      btn.onmouseover = function(){ this.style.opacity='1'; this.style.background='#1d4ed8'; };
+      btn.onmouseout = function(){ this.style.opacity='0.85'; this.style.background='#2563eb'; };
+      btn.onclick = function(){
+        if(window.electronSEB && window.electronSEB.refresh){
+          window.electronSEB.refresh();
+        } else {
+          location.reload();
+        }
+      };
+      document.body.appendChild(btn);
+    })();
+  `).catch((err) => { console.error('[SEB] Inject toolbar error:', err); });
+}
+
+// ============================================================
+//  INJECT ANTI-CHEAT (hanya saat locked/ujian)
 // ============================================================
 function injectAntiCheat() {
   win.webContents.executeJavaScript(`
     (function(){
-      if(window.__SEB) return;
-      window.__SEB = true;
+      if(window.__SEB_ANTICHEAT) return;
+      window.__SEB_ANTICHEAT = true;
 
-      // Block right-click
       document.addEventListener('contextmenu', e => e.preventDefault());
 
-      // Block copy/paste/print shortcuts
       document.addEventListener('keydown', function(e){
-        if((e.ctrlKey && 'cvxasup'.includes(e.key.toLowerCase())) ||
+        if((e.ctrlKey && 'cvxasu'.includes(e.key.toLowerCase())) ||
            e.key==='F12'||e.key==='F5'||e.key==='F11'||
            (e.ctrlKey&&e.shiftKey&&'IJC'.includes(e.key)))
         { e.preventDefault(); }
       });
 
-      // Block drag
       document.addEventListener('dragstart', e => e.preventDefault());
 
-      // Block print
       var s=document.createElement('style');
       s.textContent='@media print{body{display:none!important}}';
       document.head.appendChild(s);
-
-      // Badge
-      if(!document.getElementById('seb-b')){
-        var b=document.createElement('div');
-        b.id='seb-b';
-        b.style.cssText='position:fixed;top:0;left:0;right:0;background:#1e3a5f;color:#fff;text-align:center;padding:4px;font-size:11px;z-index:999999;font-family:Segoe UI,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.3)';
-        b.textContent='\\u{1F6E1} ELTSA Safe Exam Browser - Mode Terkunci';
-        document.body.prepend(b);
-        document.body.style.paddingTop='28px';
-      }
     })();
   `).catch(()=>{});
 }
