@@ -2,8 +2,8 @@
 // ELTSA SAFE EXAM BROWSER - SIMPLE KIOSK
 // Buka website langsung, kunci komputer selama ujian
 // + Toolbar Refresh SELALU tampil
-// + Ctrl+P = Simpan jawaban + Tutup (TANPA logout/savetest)
-//   → Section tidak dianggap selesai, bisa dilanjutkan
+// + Ctrl+P = Pause ujian (simpan jawaban + stop timer + tutup)
+//   → Timer berhenti, section tidak selesai, bisa dilanjutkan
 // + Auto-refresh saat kembali ke aplikasi
 // ============================================================
 const { app, BrowserWindow, globalShortcut, ipcMain, dialog, session, Menu } = require('electron');
@@ -11,6 +11,7 @@ const path = require('path');
 
 const CONFIG = {
   URL: 'https://staracademy.unis.ac.id/Login',
+  BASE_URL: 'https://staracademy.unis.ac.id/',
   ALLOWED: ['staracademy.unis.ac.id', 'unis.ac.id'],
   APP_NAME: 'ELTSA Safe Exam Browser',
 };
@@ -127,13 +128,15 @@ function createWindow() {
 }
 
 // ============================================================
-//  HANDLE EXIT APP (Ctrl+P = Simpan jawaban + Tutup)
-//  TIDAK logout → agar section tidak dianggap selesai
-//  Jawaban disimpan, timer di-reset saat masuk lagi
+//  HANDLE EXIT APP (Ctrl+P = Simpan + Pause timer + Tutup)
+//  1. Simpan jawaban soal saat ini (cekisi)
+//  2. Panggil pausetest → hapus logwaktu (timer berhenti)
+//  3. Tutup app (TANPA logout, TANPA savetest)
+//  → Section tidak selesai, timer reset, bisa dilanjutkan
 // ============================================================
 function handleExitApp() {
   if (!win) return;
-  console.log('[SEB] Ctrl+P → Simpan jawaban & tutup aplikasi...');
+  console.log('[SEB] Ctrl+P → Pause ujian & tutup aplikasi...');
 
   // Unlock dulu agar bisa close
   const wasLocked = locked;
@@ -148,31 +151,50 @@ function handleExitApp() {
     win.setSkipTaskbar(false);
   }
 
-  // Simpan jawaban soal yang sedang dikerjakan via JavaScript di halaman ujian
-  // lalu tutup aplikasi. TIDAK navigate ke logout agar session/section tidak berubah.
+  // Step 1: Simpan jawaban soal saat ini
+  // Step 2: Panggil pausetest untuk hentikan timer
+  // Step 3: Tutup aplikasi
   win.webContents.executeJavaScript(`
     (function(){
-      try {
-        if(typeof cekisi === 'function' && typeof mul !== 'undefined') {
-          cekisi(mul);
+      return new Promise(function(resolve){
+        // Simpan jawaban soal yang sedang aktif
+        try {
+          if(typeof cekisi === 'function' && typeof mul !== 'undefined') {
+            cekisi(mul);
+          }
+        } catch(e) {}
+
+        // Panggil pausetest untuk hentikan timer (hapus logwaktu)
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '${CONFIG.BASE_URL}index.php/Testcat/pausetest', true);
+          xhr.timeout = 2000;
+          xhr.onload = function(){ resolve('paused'); };
+          xhr.onerror = function(){ resolve('error'); };
+          xhr.ontimeout = function(){ resolve('timeout'); };
+          xhr.send();
+        } catch(e) {
+          resolve('no-xhr');
         }
-      } catch(e) {}
-      return 'saved';
+
+        // Fallback: resolve setelah 1.5 detik
+        setTimeout(function(){ resolve('fallback'); }, 1500);
+      });
     })();
-  `).then(() => {
-    console.log('[SEB] Jawaban disimpan, tunggu AJAX lalu tutup...');
-    // Tunggu sebentar agar AJAX save jawaban selesai
-    setTimeout(() => forceExit(), 1000);
+  `).then((result) => {
+    console.log('[SEB] Pause result:', result);
+    console.log('[SEB] Timer dihentikan, tutup aplikasi...');
+    setTimeout(() => forceExit(), 300);
   }).catch(() => {
-    console.log('[SEB] Tidak ada soal aktif, langsung tutup...');
+    console.log('[SEB] Error, tetap tutup...');
     forceExit();
   });
 
-  // Safety: force exit setelah 3 detik
+  // Safety: force exit setelah 4 detik
   setTimeout(() => {
     console.log('[SEB] Timeout - force exit');
     forceExit();
-  }, 3000);
+  }, 4000);
 }
 
 function forceExit() {
