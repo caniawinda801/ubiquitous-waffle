@@ -2,8 +2,8 @@
 // ELTSA SAFE EXAM BROWSER - SIMPLE KIOSK
 // Buka website langsung, kunci komputer selama ujian
 // + Toolbar Refresh SELALU tampil
-// + Ctrl+P = LOGOUT + TUTUP APLIKASI (tanpa konfirmasi)
-//   → Agar waktu ujian tidak berkurang & bisa dilanjutkan
+// + Ctrl+P = Simpan jawaban + Tutup (TANPA logout/savetest)
+//   → Section tidak dianggap selesai, bisa dilanjutkan
 // + Auto-refresh saat kembali ke aplikasi
 // ============================================================
 const { app, BrowserWindow, globalShortcut, ipcMain, dialog, session, Menu } = require('electron');
@@ -11,7 +11,6 @@ const path = require('path');
 
 const CONFIG = {
   URL: 'https://staracademy.unis.ac.id/Login',
-  LOGOUT_URL: 'https://staracademy.unis.ac.id/Login/logout',
   ALLOWED: ['staracademy.unis.ac.id', 'unis.ac.id'],
   APP_NAME: 'ELTSA Safe Exam Browser',
 };
@@ -128,14 +127,15 @@ function createWindow() {
 }
 
 // ============================================================
-//  HANDLE EXIT APP (Ctrl+P = Langsung LOGOUT + TUTUP)
-//  Tidak ada konfirmasi → langsung logout agar waktu tidak jalan
+//  HANDLE EXIT APP (Ctrl+P = Simpan jawaban + Tutup)
+//  TIDAK logout → agar section tidak dianggap selesai
+//  Jawaban disimpan, timer di-reset saat masuk lagi
 // ============================================================
 function handleExitApp() {
   if (!win) return;
-  console.log('[SEB] Ctrl+P → Logout & tutup aplikasi...');
+  console.log('[SEB] Ctrl+P → Simpan jawaban & tutup aplikasi...');
 
-  // Unlock dulu agar bisa navigasi dan close
+  // Unlock dulu agar bisa close
   const wasLocked = locked;
   if (wasLocked) {
     locked = false;
@@ -148,17 +148,27 @@ function handleExitApp() {
     win.setSkipTaskbar(false);
   }
 
-  // Navigasi ke logout URL agar session logout & waktu berhenti
-  win.webContents.loadURL(CONFIG.LOGOUT_URL).then(() => {
-    console.log('[SEB] Logout berhasil, tutup aplikasi...');
-    setTimeout(() => forceExit(), 500);
+  // Simpan jawaban soal yang sedang dikerjakan via JavaScript di halaman ujian
+  // lalu tutup aplikasi. TIDAK navigate ke logout agar session/section tidak berubah.
+  win.webContents.executeJavaScript(`
+    (function(){
+      try {
+        if(typeof cekisi === 'function' && typeof mul !== 'undefined') {
+          cekisi(mul);
+        }
+      } catch(e) {}
+      return 'saved';
+    })();
+  `).then(() => {
+    console.log('[SEB] Jawaban disimpan, tunggu AJAX lalu tutup...');
+    // Tunggu sebentar agar AJAX save jawaban selesai
+    setTimeout(() => forceExit(), 1000);
   }).catch(() => {
-    // Jika gagal navigate, tetap tutup
-    console.log('[SEB] Logout gagal, tetap tutup aplikasi...');
+    console.log('[SEB] Tidak ada soal aktif, langsung tutup...');
     forceExit();
   });
 
-  // Safety: jika logout terlalu lama, force exit setelah 3 detik
+  // Safety: force exit setelah 3 detik
   setTimeout(() => {
     console.log('[SEB] Timeout - force exit');
     forceExit();
